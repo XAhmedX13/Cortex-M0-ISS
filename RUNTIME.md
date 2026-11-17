@@ -3,13 +3,13 @@
 Build from the repository root:
 
 ```sh
-gcc -std=c11 -O2 -Wall -Wextra -o iss skeletons/iss.c decoder.c disassembler.c
+gcc -std=c11 -O2 -Wall -Wextra -o iss iss.c decoder.c disassembler.c
 python3 public-tests/run_tests.py --iss ./iss cp1 cp2
 python3 -m unittest discover -s tests -v
 ```
 
-The C implementation is the active simulator. The Python file remains an
-alternative starter and is not kept in sync.
+The root-level `iss.c` is the active simulator. The old C and Python skeletons
+were removed on main.
 
 ## Interfaces for Members A and B
 
@@ -37,10 +37,11 @@ alternative starter and is not kept in sync.
 
 ## Remaining team integration
 
-`step()` still contains the starter MOVS, B, and SVC implementations. A/B must
-connect their decoded instruction behavior and BL here. Consequently, most CP2
-public programs cannot execute yet even though Member C's console services,
-limit option, reset, and trace path are implemented.
+`step()` combines the decoded instruction executor from main with Member C's
+fetch diagnostics, service handling, retirement, and tracing. The second halfword
+is fetched only for wide instructions, whose sequential PC advances by four bytes.
+Instruction implementations still need to be validated against the public tests;
+merging the executor does not establish that every instruction is correct.
 
 The individual homework port requires choosing the original RARS program and
 coordinating the team's three choices. Contribution attribution requires the

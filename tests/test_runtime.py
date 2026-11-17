@@ -1,7 +1,7 @@
 """Infrastructure regressions; run: python3 -m unittest discover -s tests -v.
 
 Small encoded fixtures use only the starter MOVS/B/SVC instructions so these
-checks do not depend on Member A/B execution implementation.
+checks focus on runtime behavior while using the integrated executor.
 """
 import os
 from pathlib import Path
@@ -32,12 +32,12 @@ class RuntimeTests(unittest.TestCase):
         cls.build = tempfile.TemporaryDirectory()
         cls.iss = Path(cls.build.name) / 'iss'
         subprocess.run([os.environ.get('CC', 'gcc'), '-std=c11', '-Wall', '-Wextra', '-Werror',
-                        '-O2', '-o', str(cls.iss), str(ROOT / 'skeletons/iss.c'),
+                        '-O2', '-o', str(cls.iss), str(ROOT / 'iss.c'),
                         str(ROOT / 'decoder.c'), str(ROOT / 'disassembler.c')], check=True)
         # Inspect reset state directly without needing additional instructions.
         harness = Path(cls.build.name) / 'reset.c'
         harness.write_text('#define main simulator_main\n#include "' +
-                           (ROOT / 'skeletons/iss.c').as_posix() +
+                           (ROOT / 'iss.c').as_posix() +
                            '"\n#undef main\nint main(void) {\n'
                            'rom[0]=3; rom[2]=4; rom[3]=0x20; rom[4]=1; rom[5]=1;\n'
                            'r[0]=7; N=Z=C=V=1; instret=9; reset();\n'
@@ -50,7 +50,7 @@ class RuntimeTests(unittest.TestCase):
 
         memory_source = Path(cls.build.name) / 'memory.c'
         memory_source.write_text('#define main simulator_main\n#include "' +
-                                 (ROOT / 'skeletons/iss.c').as_posix() +
+                                 (ROOT / 'iss.c').as_posix() +
                                  '"\n#undef main\n' + r'''
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
