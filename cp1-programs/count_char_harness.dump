@@ -1,0 +1,15 @@
+
+Hex dump of section '.vectors':
+  0x00000000 00000420 01010000                   ... ....
+
+
+Hex dump of section '.text':
+  0x00000100 07486121 00f001f8 00df0022 0378002b .Ha!.......".x.+
+  0x00000110 04d08b42 00d10132 0130f7e7 10467047 ...B...2.0...FpG
+  0x00000120 24010000                            $...
+
+
+Hex dump of section '.rodata':
+  0x00000124 616e616e 61732063 6f6d706f 74652c20 ananas compote, 
+  0x00000134 62616e61 6e612073 706c6974 00       banana split.
+

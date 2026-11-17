@@ -1,0 +1,35 @@
+
+/home/hazemoonium/workspace/Cortex-M0-ISS/cp1-programs/sum_even_harness.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+00000100 <_start>:
+ 100:	4809      	ldr	r0, [pc, #36]	@ (128 <done+0x4>)
+ 102:	210a      	movs	r1, #10
+ 104:	f000 f801 	bl	10a <sum_even>
+ 108:	df00      	svc	0
+
+0000010a <sum_even>:
+ 10a:	b530      	push	{r4, r5, lr}
+ 10c:	2200      	movs	r2, #0
+ 10e:	2300      	movs	r3, #0
+ 110:	2501      	movs	r5, #1
+
+00000112 <loop>:
+ 112:	428b      	cmp	r3, r1
+ 114:	da06      	bge.n	124 <done>
+ 116:	6804      	ldr	r4, [r0, #0]
+ 118:	422c      	tst	r4, r5
+ 11a:	d100      	bne.n	11e <skip>
+ 11c:	1912      	adds	r2, r2, r4
+
+0000011e <skip>:
+ 11e:	3004      	adds	r0, #4
+ 120:	3301      	adds	r3, #1
+ 122:	e7f6      	b.n	112 <loop>
+
+00000124 <done>:
+ 124:	0010      	movs	r0, r2
+ 126:	bd30      	pop	{r4, r5, pc}
+ 128:	0000012c 	.word	0x0000012c
