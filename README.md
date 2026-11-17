@@ -1,51 +1,42 @@
-# CSCE 2303 Cortex-M0 ISS project: files
+# Cortex-M0 Instruction Set Simulator
 
-| File or folder | Use it for |
-| --- | --- |
-| `CSCE2303_M0_ISS_Handout.docx` | Project specification, deadlines and grading requirements. |
-| `BUILDING.md`, `templates/`, `tools/` | Tested Compiler Explorer links and optional offline build helpers. |
-| `tools/asm/` | Python-only Thumb assembler for the supported course subset; see its README. |
-| `refiss-v1.1.html` | The reference simulator. Double-click it to open it in your browser; it works offline. Handout section 7 explains it. |
-| `skeletons/iss.c`, `skeletons/iss.py` | Starting points for your simulator (handout section 13). Keep the one in your language. |
-| `examples/` | The factorial program and a C program from the handout, each with its `.dump`. |
-| `public-tests/` | The public tests for every checkpoint, and `run_tests.py` to run them. |
+CSCE 2303 project in C. The simulator loads readelf section dumps, decodes the
+43-instruction course subset, disassembles programs, and executes CP2 programs.
 
-## Running the public tests
+## Build and run
 
-```
-python3 public-tests/run_tests.py --iss "./iss" cp1
-python3 public-tests/run_tests.py --iss "python3 iss.py" cp2
-python3 public-tests/run_tests.py --iss "./iss" all
-python3 public-tests/run_tests.py --iss "./iss" cp3/fnptr
+```sh
+cc -std=c11 -O2 -Wall -Wextra -o iss iss.c decoder.c disassembler.c
+./iss --disasm public-tests/cp1/allinsn/prog.dump
+./iss --trace trace.txt public-tests/cp2/fact/prog.dump
+python3 public-tests/run_tests.py --iss ./iss cp1 cp2
 ```
 
-`--iss` is the command that starts your simulator. Each test folder holds the program
-(`prog.dump` and its source), any input (`input.txt`) and options (`args.txt`), and the
-expected stdout, exit status, FAULT or LIMIT line and trace. CP1 tests run your
-`--disasm` and compare it with objdump's listing in `expected.objdump`. For any other
-test you can paste `prog.dump` and `input.txt` into `refiss` to see the same result.
+A fresh build of main passed all 3 CP1 and 9 CP2 public tests. This does not prove
+coverage of every required encoding. Linux build verification remains pending.
 
-The script needs Python 3.8 or later and nothing else.
+## Our Thumb programs
 
-## Release 1.1 on November 3, 2026
+Runnable source/dump pairs are in `cp1-programs/`: `sum_even_harness` (exit 30)
+and `count_char_harness` (exit 6). Both produce no stdout. `population_count.s`
+still needs a runnable harness, dump, and recorded expected result.
 
-Use the included handout and refiss-v1.1.html together. The required subset has
-43 instructions, including ADR. Both extensions are required. The public suite
-contains 45 cases: 3 disassembly cases and 42 execution cases.
+To rebuild a dump with the Arm toolchain installed:
 
-New regression cases cover ADC/SBC overflow, non-ASCII output bytes, ADR, BLX LR,
-WRITE to stderr, sequential-target branch timing on both cores, and TRACE_ON.
-DUMP_REGS and DUMP_MEM are checked against expected.debug.json by value, allowing
-the formatting variations specified in the handout. expected.stderr, when present,
-is compared byte for byte. A faulting instruction has no trace line, EXIT is traced
-when enabled, TRACE_ON includes itself, and TRACE_OFF excludes itself. READ memory
-writes do not appear in the trace.
+```sh
+python3 tools/build_dump.py cp1-programs/sum_even_harness.s
+```
 
-Deadlines are Tuesdays at 23:59 Cairo time: CP1 November 10, CP2 November 17,
-CP3 November 24, and final December 1, 2026. Submit the repository URL and checkpoint
-tag on Canvas. Keep source code and CONTRIBUTIONS.md in each tagged commit.
+See [BUILDING.md](BUILDING.md) for Compiler Explorer and offline build instructions.
+To check against refiss, open `refiss-v1.1.html` in a browser, load the same dump
+and input, run it, and compare stdout, exit status, and trace. Paste our trace into
+its Compare box. Refiss checks and same-input RARS comparisons for all three
+homework ports remain to be recorded; no reference verification is claimed here.
 
-Build instructions and tested template links: see [BUILDING.md](BUILDING.md).
+## Submission checklist
 
-C target programs use the supplied bare-metal startup and direct SVC wrappers,
-with no standard library or libgcc. Both C and assembly build in Compiler Explorer.
+Complete the third runnable port, record all three RARS/refiss comparisons, and
+review instruction coverage. Include sources, dumps, tests, build instructions,
+and [CONTRIBUTIONS.md](CONTRIBUTIONS.md) in each checkpoint tag. No `cp1` or `cp2`
+tag was found during this audit. Submit the repository URL and tag on Canvas.
+The full project also requires twelve original tests, at least four per member.
