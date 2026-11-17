@@ -3,7 +3,8 @@
 | File or folder | Use it for |
 | --- | --- |
 | `CSCE2303_M0_ISS_Handout.docx` | Project specification, deadlines and grading requirements. |
-| `BUILDING.md`, `templates/`, `tools/` | Tested Compiler Explorer links and an optional offline build helper. |
+| `BUILDING.md`, `templates/`, `tools/` | Tested Compiler Explorer links and optional offline build helpers. |
+| `tools/asm/` | Python-only Thumb assembler for the supported course subset; see its README. |
 | `refiss-v1.1.html` | The reference simulator. Double-click it to open it in your browser; it works offline. Handout section 7 explains it. |
 | `skeletons/iss.c`, `skeletons/iss.py` | Starting points for your simulator (handout section 13). Keep the one in your language. |
 | `examples/` | The factorial program and a C program from the handout, each with its `.dump`. |
