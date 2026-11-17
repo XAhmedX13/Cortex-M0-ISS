@@ -361,15 +361,16 @@ void step(void)
 
         // Move instructions
         case OP_MOV:
-            if (instruction.instructionFormat == FMT_MOV_REG) {
-                res = r[instruction.rn];
+            if (instruction.instructionFormat == FMT_MOV_REG ||
+                instruction.instructionFormat == FMT_MOVS_REG) {
+                res = r[instruction.rm];
             } else {
                 res = instruction.imm;
             }
             r[instruction.rd] = res;
             break;
         case OP_MVN:
-            res = ~r[instruction.rn];
+            res = ~r[instruction.rm];
             r[instruction.rd] = res;
             break;
 
@@ -481,6 +482,7 @@ void step(void)
             m = r[instruction.rm] & 0xFF;
             int carry = C;
             if (instruction.instructionFormat == FMT_LSL_IMM) {
+                n = r[instruction.rm];
                 m = instruction.imm;
             }
             if (m == 0) {
@@ -498,6 +500,7 @@ void step(void)
                 res = 0;
                 carry = 0;
             }
+            r[instruction.rd] = res;
             if (instruction.sets_flags) {
                 C = carry;
             }
@@ -507,6 +510,7 @@ void step(void)
             m = r[instruction.rm] & 0xFF;
             carry = C;
             if (instruction.instructionFormat == FMT_LSR_IMM) {
+                n = r[instruction.rm];
                 m = instruction.imm;
                 if (m == 0) {
                     m = 32;
@@ -539,6 +543,7 @@ void step(void)
             n = r[instruction.rn];
             m = r[instruction.rm] & 0xFF;
             if (instruction.instructionFormat == FMT_ASR_IMM) {
+                n = r[instruction.rm];
                 m = instruction.imm;
                 if (m == 0) {
                     m = 32;
