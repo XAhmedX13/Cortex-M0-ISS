@@ -1,9 +1,14 @@
 /* iss.c -- CSCE 2303 Cortex-M0 simulator skeleton.
-   Build: gcc -O2 -Wall -o iss iss.c      Run: ./iss prog.dump */
+   Build from repository root: gcc -std=c11 -O2 -Wall -Wextra -o iss skeletons/iss.c decoder.c disassembler.c      Run: ./iss prog.dump */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <ctype.h> // for hexadecimal conversion
+#include <errno.h> // for detecting numeric conversion errors, for example overflowing command-line limit
+#include <inttypes.h> // for PRIx32, PRId32, etc.
+#include "../decoder.h"
+#include "../disassembler.h"
 
 #define ROM_BASE  0x00000000u
 #define ROM_SIZE  (1u << 20)              /* 1 MB   */
@@ -15,6 +20,29 @@ uint8_t  rom[ROM_SIZE], ram[RAM_SIZE];
 uint32_t r[16];                    /* r[13] = sp, r[14] = lr, r[15] = pc */
 int      N, Z, C, V;               /* the APSR flags */
 uint64_t instret;
+static uint64_t max_instr = MAX_INSTR; // default to 100m
+static FILE *trace_file; // Open trace output stream, default to NULL (not requested trace)
+static int exit_requested, exit_status;
+static int input_pending[2], input_count;
+static uint32_t text_start;
+static uint64_t text_end; // 64 bits to avoid overflow
+static int has_text;
+
+struct memory_write { uint32_t addr, value; int size; };
+
+static struct memory_write writes[16];
+static size_t write_count;
+static int recording_writes;
+
+static void load_error(const char *message)
+{
+    fprintf(stderr, "load error: %s\n", message);
+    exit(253);
+} // the input program could not be loaded; status 253
+// the loader uses this function before execution 
+
+/* Separate fetch diagnostics from data-access diagnostics. */
+static uint32_t fetch_halfword(uint32_t addr);
 
 void fault(const char *kind)
 {
@@ -25,7 +53,7 @@ void fault(const char *kind)
 /* Pointer to the byte at addr, or NULL if addr is unmapped. */
 uint8_t *mem_ptr(uint32_t addr)
 {
-    if (addr - ROM_BASE < ROM_SIZE) return &rom[addr - ROM_BASE];
+    if (addr - ROM_BASE < ROM_SIZE) return &rom[addr - ROM_BASE]; 
     if (addr - RAM_BASE < RAM_SIZE) return &ram[addr - RAM_BASE];
     return NULL;
 }
@@ -34,7 +62,7 @@ uint32_t read_mem(uint32_t addr, int size)       /* size = 1, 2 or 4 */
 {
     if (addr % size) fault("UNALIGNED");
     uint8_t *p = mem_ptr(addr);
-    if (!p) fault("BUS");
+    if (!p || !mem_ptr(addr + (uint32_t)size - 1)) fault("BUS"); // the old check validated only the starting address, now it verifies the first and last byte of the requested access
     uint32_t v = 0;
     for (int i = size - 1; i >= 0; i--)                  /* little-endian */
         v = (v << 8) | p[i];
@@ -44,62 +72,228 @@ uint32_t read_mem(uint32_t addr, int size)       /* size = 1, 2 or 4 */
 void write_mem(uint32_t addr, uint32_t v, int size)
 {
     if (addr % size) fault("UNALIGNED");
-    if (addr - RAM_BASE >= RAM_SIZE) fault("BUS");       /* only RAM is writable */
+    if (addr - RAM_BASE >= RAM_SIZE ||
+        (uint32_t)size > RAM_SIZE - (addr - RAM_BASE)) fault("BUS"); // The subtraction avoids expressing the test as an unchecked addr + size
+        // old check validated only the starting address, now it verifies that the requested size fits    /* only RAM is writable */
+    if (recording_writes) {
+        /* PUSH/STM can write at most sixteen registers per instruction. */
+        if (write_count >= sizeof writes / sizeof writes[0]) abort();
+        uint32_t mask = size == 4 ? UINT32_MAX : (1u << (size * 8)) - 1;
+        writes[write_count++] = (struct memory_write){addr, v & mask, size};
+    }
     for (int i = 0; i < size; i++)
         ram[addr - RAM_BASE + i] = (uint8_t)(v >> (8 * i));
 }
 
-/* Load a `readelf -x` dump. A data line looks like
-     "  0x00000100 094811df 0a2000f0 03f812df 002000df .H... ......"
-   The 35 characters after the address hold up to 16 bytes; the rest is ASCII. */
+/* readelf reserves 35 characters for up to sixteen bytes. Never parse ASCII. */
+// old loader was short and permissive, this replacement validates the input more carefully while retaining the supplied readelf layout
 void load_dump(const char *path)
 {
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); exit(253); }
-    char line[256];
+    memset(rom, 0, sizeof rom);
+    memset(ram, 0, sizeof ram); // clearing memory (not necessary but to be safe)
+    has_text = 0;
+    text_end = 0; // reseting section metadata
+    int in_text = 0;
+    size_t count = 0;
+    char line[1024]; // reading lines into a larger buffer
     while (fgets(line, sizeof line, f)) {
+        if (!strchr(line, '\n') && !feof(f)) load_error("line too long");
         char *s = line;
-        while (*s == ' ') s++;
-        if (strncmp(s, "0x", 2) != 0) continue;          /* headers, blank lines */
-        uint32_t addr = (uint32_t)strtoul(s, &s, 16);
-        s++;                                             /* the space after the address */
-        for (int i = 0; i + 1 < 35 && s[i] && s[i] != '\n'; ) {
-            if (s[i] == ' ') { i++; continue; }
-            unsigned byte;
-            if (sscanf(s + i, "%2x", &byte) != 1) break;
-            uint8_t *p = mem_ptr(addr++);
-            if (!p) { fprintf(stderr, "load error\n"); exit(253); }
-            *p = (uint8_t)byte;
-            i += 2;
+        while (*s == ' ' || *s == '\t') s++;
+        if (strncmp(s, "Hex dump of section ", 20) == 0) {
+            in_text = strncmp(s, "Hex dump of section '.text':", 27) == 0; // updating the current section
+            continue;
         }
+        if (strncmp(s, "0x", 2) != 0) continue;
+        char *end;
+        errno = 0;
+        unsigned long long address = strtoull(s, &end, 16);
+        if (errno || end == s || address > UINT32_MAX || *end != ' ')
+            load_error("invalid address"); // prevent an oversized address from being silently truncated into a valid-looking 32-bit address
+        s = end + 1;
+        size_t len = strcspn(s, "\r\n");
+        if (len > 35) len = 35;
+        int high = -1;
+        size_t bytes = 0;
+        for (size_t i = 0; i < len; i++) {
+            unsigned char c = (unsigned char)s[i];
+            if (c == ' ' || c == '\t') {
+                if (high >= 0) load_error("incomplete byte");
+                continue;
+            }
+            if (!isxdigit(c)) load_error("invalid hex data");
+            int digit = c <= '9' ? c - '0' : tolower(c) - 'a' + 10;
+            if (high < 0) { high = digit; continue; }
+            if (address > UINT32_MAX) load_error("address overflow");
+            uint8_t *p = mem_ptr((uint32_t)address); 
+            if (!p) load_error("address outside ROM/RAM");
+            *p = (uint8_t)((high << 4) | digit); // each pair of hexadecimal digits becomes one byte
+            if (in_text) {
+                if (!has_text || address < text_start) text_start = (uint32_t)address;
+                if (address + 1 > text_end) text_end = address + 1;
+                has_text = 1;
+            }
+            address++;
+            high = -1;
+            count++;
+            bytes++;
+        }
+        if (high >= 0 || !bytes) load_error("incomplete data line");
     }
+    if (ferror(f)) load_error("cannot read dump");
     fclose(f);
+    if (!count) load_error("no data lines found");
+}
+
+static uint32_t fetch_halfword(uint32_t addr)
+{
+    uint32_t saved_pc = r[15];
+    r[15] = addr;
+    uint32_t hw = read_mem(addr, 2);
+    r[15] = saved_pc;
+    return hw;
+}
+// temporarily sets r[15] to the fetch address. 
+// if read_mem() faults, that is the address reported. 
+// if the fetch succeeds, the original PC is restored.
+
+// The driver rejects incomplete trailing instructions, then calls the existing team functions
+static int disassemble_text(void)
+{
+    if (!has_text) load_error("no .text section found"); // checks that .text exists, then walks its extent
+    for (uint64_t address = text_start; address < text_end;) {
+        if ((address & 1) || address + 2 > text_end)
+            load_error("incomplete .text halfword");
+        uint32_t pc = (uint32_t)address;
+        uint16_t hw = (uint16_t)read_mem(pc, 2), hw2 = 0;
+        int wide = (hw >> 11) >= 0x1d; // at each address, it fetches the first halfword and determines whether the encoding indicates a wide instruction
+        if (wide) {
+            if (address + 4 > text_end) load_error("incomplete wide instruction");
+            hw2 = (uint16_t)read_mem(pc + 2, 2);
+        }
+        struct decodedInstruction instruction = decode(hw, hw2, pc); 
+        char assembly[256];
+        disassemble(instruction, pc, assembly, sizeof assembly);
+        if (wide) printf("%08" PRIx32 ": %04x%04x %s\n", pc, hw, hw2, assembly);
+        else printf("%08" PRIx32 ": %04x %s\n", pc, hw, assembly);
+        address += wide ? 4 : 2;
+    }
+    return 0;
 }
 
 void reset(void)
 {
-    r[13] = read_mem(0, 4);                  /* initial sp   */
+    memset(r, 0, sizeof r);
+    N = Z = C = V = 0;
+    instret = 0;
+    exit_requested = exit_status = 0;
+    input_count = 0;
+    r[13] = read_mem(0, 4) & ~3u;                  /* initial sp   */
+    // 3u has its bottom two bits set 
+    // its complement has those bits clear, 
+    // ANDing with it clears SP bits 0 and 1.
     uint32_t pc = read_mem(4, 4);            /* reset vector */
     r[15] = pc;                            /* diagnostic uses the reset vector */
     if (!(pc & 1)) fault("INVSTATE");
     r[15] = pc & ~1u;
     r[14] = 0xFFFFFFFFu;
 }
+// reset() explicitly resets registers, flags, the retirement counter, exit state, and pending-input state, 
+// including when called after state has already changed, as several values depends on them
 
 void set_nz(uint32_t x) { N = x >> 31; Z = (x == 0); }
+
+/* Two bytes of lookahead let GETINT leave a sign with no digits unread. */
+static int input_byte(void)
+{
+    return input_count ? input_pending[--input_count] : getchar();
+}
+
+static void unread_byte(int c)
+{
+    if (c != EOF) input_pending[input_count++] = c;
+}
+
+// GETCHAR and GETINT share these helpers so input read ahead by GETINT remains visible to the next service
+
+static uint32_t input_integer(void)
+{
+    int c;
+    do { c = input_byte(); } while (c == ' ' || (c >= 9 && c <= 13));
+    int sign = 0;
+    if (c == '+' || c == '-') { sign = c; c = input_byte(); }
+    if (c < '0' || c > '9') {
+        unread_byte(c);
+        if (sign) unread_byte(sign);
+        return 0;
+    }
+    uint32_t value = 0;
+    do {
+        value = value * 10u + (unsigned)(c - '0');
+        c = input_byte();
+    } while (c >= '0' && c <= '9');
+    unread_byte(c);
+    return sign == '-' ? 0u - value : value;
+}
 
 void svc(int n)
 {
     switch (n) {
-    case 0x00: exit(r[0] & 0xFF);                                    /* EXIT    */
-    case 0x10: putchar(r[0] & 0xFF); break;                          /* PUTCHAR */
-    case 0x11: for (uint32_t a = r[0]; read_mem(a, 1); a++)          /* PUTS    */
-                   putchar(read_mem(a, 1));
-               break;
-    case 0x12: printf("%d", (int32_t)r[0]); break;                   /* PUTINT  */
-    /* TODO: the other services in section 5 of the handout */
-    default:   fault("UNDEFINED");
+    case 0x00:
+        // the service requests termination and returns, 
+        // step() completes retirement and tracing, then main() observes the request
+        exit_requested = 1;
+        exit_status = r[0] & 0xff;
+        break;
+    case 0x10: putchar(r[0] & 0xff); break; // retains its original low-byte behavior
+    case 0x11:
+        for (uint32_t a = r[0];; a++) {
+            uint32_t byte = read_mem(a, 1);
+            if (!byte) break;
+            putchar((int)byte);
+        }
+        break;
+    case 0x12: printf("%" PRId32, (int32_t)r[0]); break;
+    case 0x13: printf("0x%08" PRIX32, r[0]); break; // PUTHEX: prints a lowercase 0x prefix followed by eight uppercase hex digits
+    case 0x14: { // GETCHAR
+        int c = input_byte();
+        r[0] = c == EOF ? UINT32_MAX : (uint32_t)c;
+        break;
+    } 
+    case 0x15: r[0] = input_integer(); break; // GETINT
+    /* CP3 services are added here without changing retirement in step(). */
+    default: fault("UNDEFINED"); 
     }
+}
+
+// for sorting addresses
+static int compare_writes(const void *a, const void *b)
+{
+    const struct memory_write *x = a, *y = b;
+    return (x->addr > y->addr) - (x->addr < y->addr);
+}
+
+// for writing an instruction trace
+static void trace_instruction(uint32_t pc, uint32_t hw, uint32_t hw2,
+                              int wide, const uint32_t before[15])
+{
+    if (!trace_file) return;
+    static const char *names[] = {
+        "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7",
+        "r8", "r9", "r10", "r11", "r12", "sp", "lr"
+    };
+    fprintf(trace_file, "%08" PRIx32 " %04" PRIx32, pc, hw);
+    if (wide) fprintf(trace_file, "%04" PRIx32, hw2);
+    for (int i = 0; i < 15; i++)
+        if (r[i] != before[i])
+            fprintf(trace_file, " %s=%08" PRIx32, names[i], r[i]);
+    qsort(writes, write_count, sizeof writes[0], compare_writes);
+    for (size_t i = 0; i < write_count; i++)
+        fprintf(trace_file, " [%08" PRIx32 "]=%0*" PRIx32,
+                writes[i].addr, writes[i].size * 2, writes[i].value);
+    fprintf(trace_file, " NZCV=%d%d%d%d\n", N, Z, C, V);
 }
 
 /* Execute one instruction. r[15] holds the address of the current
@@ -107,12 +301,20 @@ void svc(int n)
 void step(void)
 {
     uint32_t pc = r[15];
-    uint32_t hw = read_mem(pc, 2);
+    uint32_t before[15];
+    memcpy(before, r, sizeof before);
+    write_count = 0;
+    recording_writes = 1;
+    // this preserves the executed address, snapshots registers, and starts a fresh write log
+
+    uint32_t hw = fetch_halfword(pc);
+    uint32_t hw2 = 0;
+    int wide = (hw >> 11) >= 0x1d;
     uint32_t next = pc + 2;
+    // moved hw2 outside the wide-instruction block so it remains available to the trace formatter after execution
 
     if ((hw >> 11) >= 0x1D) {                     /* 11101, 11110, 11111: 32-bit */
-        uint32_t hw2 = read_mem(pc + 2, 2);
-        (void)hw2;
+        hw2 = fetch_halfword(pc + 2);
         next = pc + 4;
         fault("UNDEFINED");                       /* TODO: BL, from hw and hw2 */
     }
@@ -127,6 +329,7 @@ void step(void)
         next = pc + 4 + off * 2;
     }
     else if ((hw & 0xFF00) == 0xDF00) {           /* SVC #imm8 */
+        recording_writes = 0; /* Service writes are not instruction writes. */
         svc(hw & 0xFF);
     }
     /* TODO: the other instructions in section 4 of the handout */
@@ -136,20 +339,55 @@ void step(void)
 
     r[15] = next;
     instret++;
-    /* TODO: write a trace line here when --trace is given (section 6) */
+    recording_writes = 0;
+    trace_instruction(pc, hw, hw2, wide, before);
+
+    // at successful completion, the saved pc identifies the executed instruction even though r[15] now identifies the next instruction
 }
+
+static int usage(const char *program)
+{
+    fprintf(stderr, "usage: %s [--disasm] [--max-instr N] [--trace FILE] PROGRAM\n", program);
+    return 2;
+} // CLI errors return status 2
 
 int main(int argc, char **argv)
 {
-    /* TODO: parse the options in section 6 */
-    if (argc != 2) { fprintf(stderr, "usage: %s PROGRAM\n", argv[0]); return 2; }
-    load_dump(argv[1]);
+    const char *program = NULL, *trace_path = NULL;
+    int disasm = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--disasm")) disasm = 1;
+        else if (!strcmp(argv[i], "--trace")) {
+            if (++i == argc) return usage(argv[0]);
+            trace_path = argv[i];
+        } else if (!strcmp(argv[i], "--max-instr")) {
+            if (++i == argc || !argv[i][0]) return usage(argv[0]);
+            for (const char *p = argv[i]; *p; p++)
+                if (*p < '0' || *p > '9') return usage(argv[0]);
+            errno = 0;
+            char *end; // zero is accepted; it prevents any instruction from executing
+            max_instr = strtoull(argv[i], &end, 10);
+            if (errno || *end) return usage(argv[0]);
+        } else if (argv[i][0] == '-' || program) return usage(argv[0]); 
+        else program = argv[i];
+    }
+    if (!program) return usage(argv[0]);
+    // the parser rejects missing option values, unknown options, multiple program paths, and a missing program path
+
+    load_dump(program);
+    if (disasm) return disassemble_text();
+    if (trace_path) {
+        trace_file = fopen(trace_path, "w");
+        if (!trace_file) { perror(trace_path); return 2; }
+    }
     reset();
-    for (;;) {
-        if (instret >= MAX_INSTR) {
-            fprintf(stderr, "LIMIT at pc=0x%08x\n", r[15]);
-            exit(254);
+    while (!exit_requested) {
+        if (instret >= max_instr) {
+            fprintf(stderr, "LIMIT at pc=0x%08" PRIx32 "\n", r[15]);
+            return 254;
         }
         step();
     }
+    if (trace_file && fclose(trace_file)) { perror(trace_path); return 2; }
+    return exit_status;
 }
