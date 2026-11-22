@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 #include <ctype.h> // for hexadecimal conversion
 #include <errno.h> // for detecting numeric conversion errors, for example overflowing command-line limit
 #include <inttypes.h> // for PRIx32, PRId32, etc.
@@ -22,11 +23,12 @@ int      N, Z, C, V;               /* the APSR flags */
 uint64_t instret;
 static uint64_t max_instr = MAX_INSTR; // default to 100m
 static FILE *trace_file; // Open trace output stream, default to NULL (not requested trace)
-static int exit_requested, exit_status;
+static bool exit_requested;
+static int exit_status;
 static int input_pending[2], input_count;
 static uint32_t text_start;
 static uint64_t text_end; // 64 bits to avoid overflow
-static int has_text;
+static bool has_text;
 
 struct memory_write { uint32_t addr, value; int size; };
 
@@ -62,7 +64,7 @@ uint32_t read_mem(uint32_t addr, int size)       /* size = 1, 2 or 4 */
 {
     if (addr % size) fault("UNALIGNED");
     uint8_t *p = mem_ptr(addr);
-    if (!p || !mem_ptr(addr + (uint32_t)size - 1)) fault("BUS"); // the old check validated only the starting address, now it verifies the first and last byte of the requested access
+    if (!p) fault("BUS");
     uint32_t v = 0;
     for (int i = size - 1; i >= 0; i--)                  /* little-endian */
         v = (v << 8) | p[i];
@@ -72,9 +74,7 @@ uint32_t read_mem(uint32_t addr, int size)       /* size = 1, 2 or 4 */
 void write_mem(uint32_t addr, uint32_t v, int size)
 {
     if (addr % size) fault("UNALIGNED");
-    if (addr - RAM_BASE >= RAM_SIZE ||
-        (uint32_t)size > RAM_SIZE - (addr - RAM_BASE)) fault("BUS"); // The subtraction avoids expressing the test as an unchecked addr + size
-        // old check validated only the starting address, now it verifies that the requested size fits    /* only RAM is writable */
+    if (addr - RAM_BASE >= RAM_SIZE) fault("BUS");    /* only RAM is writable */
     if (recording_writes) {
         /* PUSH/STM can write at most sixteen registers per instruction. */
         if (write_count >= sizeof writes / sizeof writes[0]) abort();
@@ -91,15 +91,14 @@ void load_dump(const char *path)
 {
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); exit(253); }
-    memset(rom, 0, sizeof rom);
-    memset(ram, 0, sizeof ram); // clearing memory (not necessary but to be safe)
-    has_text = 0;
+    has_text = false;
+    text_start = 0;
     text_end = 0; // reseting section metadata
     int in_text = 0;
     size_t count = 0;
-    char line[1024]; // reading lines into a larger buffer
+    char line[256];
     while (fgets(line, sizeof line, f)) {
-        if (!strchr(line, '\n') && !feof(f)) load_error("line too long");
+        if (!strchr(line, '\n') && !feof(f)) load_error("line too long"); // additional defensive behavior
         char *s = line;
         while (*s == ' ' || *s == '\t') s++;
         if (strncmp(s, "Hex dump of section ", 20) == 0) {
@@ -133,7 +132,7 @@ void load_dump(const char *path)
             if (in_text) {
                 if (!has_text || address < text_start) text_start = (uint32_t)address;
                 if (address + 1 > text_end) text_end = address + 1;
-                has_text = 1;
+                has_text = true;
             }
             address++;
             high = -1;
@@ -159,7 +158,7 @@ static uint32_t fetch_halfword(uint32_t addr)
 // if read_mem() faults, that is the address reported. 
 // if the fetch succeeds, the original PC is restored.
 
-// The driver rejects incomplete trailing instructions, then calls the existing team functions
+// The driver handles a trailing wide-looking halfword as data
 static int disassemble_text(void)
 {
     if (!has_text) load_error("no .text section found"); // checks that .text exists, then walks its extent
@@ -170,7 +169,11 @@ static int disassemble_text(void)
         uint16_t hw = (uint16_t)read_mem(pc, 2), hw2 = 0;
         int wide = (hw >> 11) >= 0x1d; // at each address, it fetches the first halfword and determines whether the encoding indicates a wide instruction
         if (wide) {
-            if (address + 4 > text_end) load_error("incomplete wide instruction");
+            if (address + 4 > text_end) {
+                printf("%08" PRIx32 ": %04x .short 0x%04x\n", pc, hw, hw);
+                address += 2;
+                continue;
+            }
             hw2 = (uint16_t)read_mem(pc + 2, 2);
         }
         struct decodedInstruction instruction = decode(hw, hw2, pc); 
@@ -188,7 +191,8 @@ void reset(void)
     memset(r, 0, sizeof r);
     N = Z = C = V = 0;
     instret = 0;
-    exit_requested = exit_status = 0;
+    exit_requested = false;
+    exit_status = 0;
     input_count = 0;
     r[13] = read_mem(0, 4) & ~3u;                  /* initial sp   */
     // 3u has its bottom two bits set 
@@ -242,20 +246,15 @@ void svc(int n)
 {
     switch (n) {
     case 0x00:
-        // the service requests termination and returns, 
-        // step() completes retirement and tracing, then main() observes the request
-        exit_requested = 1;
+        exit_requested = true;
         exit_status = r[0] & 0xff;
-        break;
-    case 0x10: putchar(r[0] & 0xff); break; // retains its original low-byte behavior
-    case 0x11:
-        for (uint32_t a = r[0];; a++) {
-            uint32_t byte = read_mem(a, 1);
-            if (!byte) break;
-            putchar((int)byte);
-        }
-        break;
-    case 0x12: printf("%" PRId32, (int32_t)r[0]); break;
+        break;                                    /* EXIT    */
+    case 0x10: putchar(r[0] & 0xff); break;                           /* PUTCHAR */
+    // retains its original low-byte behavior
+    case 0x11: for (uint32_t a = r[0]; read_mem(a, 1); a++)          /* PUTS    */
+                   putchar(read_mem(a, 1));
+               break;
+    case 0x12: printf("%d", (int32_t)r[0]); break;                   /* PUTINT  */
     case 0x13: printf("0x%08" PRIX32, r[0]); break; // PUTHEX: prints a lowercase 0x prefix followed by eight uppercase hex digits
     case 0x14: { // GETCHAR
         int c = input_byte();
