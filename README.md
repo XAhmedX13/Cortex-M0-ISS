@@ -17,10 +17,6 @@ coverage of every required encoding. Linux build verification remains pending.
 
 ## Our Thumb programs
 
-Runnable source/dump pairs are in `cp1-programs/`: `sum_even_harness` (exit 30)
-and `count_char_harness` (exit 6). Both produce no stdout. `population_count.s`
-still needs a runnable harness, dump, and recorded expected result.
-
 To rebuild a dump with the Arm toolchain installed:
 
 ```sh

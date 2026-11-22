@@ -5,7 +5,6 @@ Build from the repository root:
 ```sh
 gcc -std=c11 -O2 -Wall -Wextra -o iss iss.c decoder.c disassembler.c
 python3 public-tests/run_tests.py --iss ./iss cp1 cp2
-python3 -m unittest discover -s tests -v
 ```
 
 The root-level `iss.c` is the active simulator. The old C and Python skeletons
