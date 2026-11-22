@@ -1,24 +1,28 @@
-# Member C runtime integration
+# Runtime integration
 
 Build from the repository root:
 
 ```sh
 gcc -std=c11 -O2 -Wall -Wextra -o iss iss.c decoder.c disassembler.c
 python3 public-tests/run_tests.py --iss ./iss cp1 cp2
-python3 -m unittest discover -s tests -v
 ```
 
-The root-level `iss.c` is the active simulator. The old C and Python skeletons
-were removed on main.
+The root-level `iss.c` is the active simulator. To run every public checkpoint,
+replace `cp1 cp2` with `all` in the test command above.
 
-## Interfaces for Members A and B
+## Interfaces
 
 - `load_dump()` populates ROM/RAM. Private `text_start` and exclusive `text_end`
   describe the loaded `.text` extent. `--disasm` calls the existing `decode()`
   and `disassemble()` functions without resetting or executing the machine.
+  A final complete halfword that resembles a wide prefix but has no second
+  halfword is printed as `.short` data. Execution still requires the second
+  halfword of a wide instruction to be fetched normally.
 - During `step()`, `r[15]` is the current instruction address. PC operands must
   read that address plus four. Set local `next` for branches; update `r[15]`
   only at successful retirement.
+- Every instruction that writes SP must clear its bottom two bits. Reset already
+  masks the initial SP; this rule must also be enforced in instruction execution.
 - Use `read_mem(addr, size)` and `write_mem(addr, value, size)` for data accesses.
   Sizes are 1, 2, or 4. Helpers check alignment before mapping/protection.
   Writes through `write_mem` are captured for tracing, including unchanged values.
@@ -34,16 +38,3 @@ were removed on main.
   memory helpers while recording is disabled.
 - The trace logs changed r0-r12, SP, LR, address-sorted memory writes, then NZCV.
   BL encodings must retain the first halfword first.
-
-## Remaining team integration
-
-`step()` combines the decoded instruction executor from main with Member C's
-fetch diagnostics, service handling, retirement, and tracing. The second halfword
-is fetched only for wide instructions, whose sequential PC advances by four bytes.
-Instruction implementations still need to be validated against the public tests;
-merging the executor does not establish that every instruction is correct.
-
-The individual homework port requires choosing the original RARS program and
-coordinating the team's three choices. Contribution attribution requires the
-member's name. No homework choice, report evidence, or refiss verification is
-invented by this infrastructure work.
