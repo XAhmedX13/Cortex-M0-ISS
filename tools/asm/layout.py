@@ -29,6 +29,7 @@ class Item:
     mnemonic: str = ""
     operands: List[str] = field(default_factory=list)
     pool_key: str = ""
+    payload: bytes = b""
 
 
 @dataclass
@@ -76,6 +77,7 @@ class Assembler:
         self.listing: List[tuple] = []
         self.directive_handler: Optional[DirectiveHandler] = None
         self.item_writer: Optional[ItemWriter] = None
+        self.stopped = False
 
     def set_directive_handler(self, handler: DirectiveHandler) -> None:
         """Install the function that handles assembler directives."""
@@ -116,6 +118,7 @@ class Assembler:
         mnemonic: str = "",
         operands: Optional[List[str]] = None,
         pool_key: str = "",
+        payload: bytes = b"",
     ) -> Item:
         """Place an item at the current offset and advance the location counter."""
         section = self.current()
@@ -128,6 +131,7 @@ class Assembler:
             mnemonic=mnemonic,
             operands=operands or [],
             pool_key=pool_key,
+            payload=payload,
         )
         section.size += size
         self.items.append(item)
@@ -154,6 +158,8 @@ class Assembler:
     def process_lines(self, lines: List[Line]) -> None:
         """Run pass 1 over every parsed source line."""
         for line in lines:
+            if self.stopped:
+                break
             if line.label:
                 self.define_label(line.label, line.number)
             if not line.mnemonic:
