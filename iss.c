@@ -1,6 +1,6 @@
 /* iss.c -- CSCE 2303 Cortex-M0 simulator skeleton.
-   Build from repository root: gcc -std=c11 -O2 -Wall -Wextra -o iss iss.c decoder.c disassembler.c      Run: ./iss prog.dump */
-   Build from repository root: gcc -std=c11 -O2 -Wall -Wextra -o iss iss.c decoder.c disassembler.c      Run: ./iss prog.dump */
+   Build from repository root: gcc -std=c11 -O2 -Wall -Wextra -o iss iss.c decoder.c disassembler.c
+   Run: ./iss prog.dump */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -10,7 +10,6 @@
 #include <errno.h> // for detecting numeric conversion errors, for example overflowing command-line limit
 #include <inttypes.h> // for PRIx32, PRId32, etc.
 #include "decoder.h"
-#include "disassembler.h"
 #include "disassembler.h"
 
 #define ROM_BASE  0x00000000u
@@ -58,7 +57,6 @@ void fault(const char *kind)
 uint8_t *mem_ptr(uint32_t addr)
 {
     if (addr - ROM_BASE < ROM_SIZE) return &rom[addr - ROM_BASE]; 
-    if (addr - ROM_BASE < ROM_SIZE) return &rom[addr - ROM_BASE]; 
     if (addr - RAM_BASE < RAM_SIZE) return &ram[addr - RAM_BASE];
     return NULL;
 }
@@ -88,8 +86,6 @@ void write_mem(uint32_t addr, uint32_t v, int size)
         ram[addr - RAM_BASE + i] = (uint8_t)(v >> (8 * i));
 }
 
-/* readelf reserves 35 characters for up to sixteen bytes. Never parse ASCII. */
-// old loader was short and permissive, this replacement validates the input more carefully while retaining the supplied readelf layout
 /* readelf reserves 35 characters for up to sixteen bytes. Never parse ASCII. */
 // old loader was short and permissive, this replacement validates the input more carefully while retaining the supplied readelf layout
 void load_dump(const char *path)
@@ -211,43 +207,8 @@ void reset(void)
 }
 // reset() explicitly resets registers, flags, the retirement counter, exit state, and pending-input state, 
 // including when called after state has already changed, as several values depends on them
-// reset() explicitly resets registers, flags, the retirement counter, exit state, and pending-input state, 
-// including when called after state has already changed, as several values depends on them
 
 void set_nz(uint32_t x) { N = x >> 31; Z = (x == 0); }
-
-/* Two bytes of lookahead let GETINT leave a sign with no digits unread. */
-static int input_byte(void)
-{
-    return input_count ? input_pending[--input_count] : getchar();
-}
-
-static void unread_byte(int c)
-{
-    if (c != EOF) input_pending[input_count++] = c;
-}
-
-// GETCHAR and GETINT share these helpers so input read ahead by GETINT remains visible to the next service
-
-static uint32_t input_integer(void)
-{
-    int c;
-    do { c = input_byte(); } while (c == ' ' || (c >= 9 && c <= 13));
-    int sign = 0;
-    if (c == '+' || c == '-') { sign = c; c = input_byte(); }
-    if (c < '0' || c > '9') {
-        unread_byte(c);
-        if (sign) unread_byte(sign);
-        return 0;
-    }
-    uint32_t value = 0;
-    do {
-        value = value * 10u + (unsigned)(c - '0');
-        c = input_byte();
-    } while (c >= '0' && c <= '9');
-    unread_byte(c);
-    return sign == '-' ? 0u - value : value;
-}
 
 /* Two bytes of lookahead let GETINT leave a sign with no digits unread. */
 static int input_byte(void)
@@ -387,16 +348,6 @@ void step(void)
     int wide = (hw >> 11) >= 0x1d;
     if (wide) hw2 = fetch_halfword(pc + 2);
     uint32_t next = pc + (wide ? 4u : 2u);
-    uint32_t before[15];
-    memcpy(before, r, sizeof before);
-    write_count = 0;
-    recording_writes = 1;
-
-    uint32_t hw = fetch_halfword(pc);
-    uint32_t hw2 = 0;
-    int wide = (hw >> 11) >= 0x1d;
-    if (wide) hw2 = fetch_halfword(pc + 2);
-    uint32_t next = pc + (wide ? 4u : 2u);
 
     struct decodedInstruction instruction = decode(hw, hw2, pc);
     uint32_t n, m, res = 0, addr, v;
@@ -413,16 +364,12 @@ void step(void)
             if (instruction.instructionFormat == FMT_MOV_REG ||
                 instruction.instructionFormat == FMT_MOVS_REG) {
                 res = r[instruction.rm];
-            if (instruction.instructionFormat == FMT_MOV_REG ||
-                instruction.instructionFormat == FMT_MOVS_REG) {
-                res = r[instruction.rm];
             } else {
                 res = instruction.imm;
             }
             r[instruction.rd] = res;
             break;
         case OP_MVN:
-            res = ~r[instruction.rm];
             res = ~r[instruction.rm];
             r[instruction.rd] = res;
             break;
@@ -536,7 +483,6 @@ void step(void)
             int carry = C;
             if (instruction.instructionFormat == FMT_LSL_IMM) {
                 n = r[instruction.rm];
-                n = r[instruction.rm];
                 m = instruction.imm;
             }
             if (m == 0) {
@@ -555,7 +501,6 @@ void step(void)
                 carry = 0;
             }
             r[instruction.rd] = res;
-            r[instruction.rd] = res;
             if (instruction.sets_flags) {
                 C = carry;
             }
@@ -565,7 +510,6 @@ void step(void)
             m = r[instruction.rm] & 0xFF;
             carry = C;
             if (instruction.instructionFormat == FMT_LSR_IMM) {
-                n = r[instruction.rm];
                 n = r[instruction.rm];
                 m = instruction.imm;
                 if (m == 0) {
@@ -599,7 +543,6 @@ void step(void)
             n = r[instruction.rn];
             m = r[instruction.rm] & 0xFF;
             if (instruction.instructionFormat == FMT_ASR_IMM) {
-                n = r[instruction.rm];
                 n = r[instruction.rm];
                 m = instruction.imm;
                 if (m == 0) {
@@ -807,7 +750,6 @@ void step(void)
         // System
         case OP_SVC:
             recording_writes = 0; /* Service writes are not instruction writes. */
-            recording_writes = 0; /* Service writes are not instruction writes. */
             svc(instruction.imm);
             break;
         case OP_NOP:
@@ -820,15 +762,6 @@ void step(void)
 
     r[15] = next;
     instret++;
-    recording_writes = 0;
-    trace_instruction(pc, hw, hw2, wide, before);
-}
-
-static int usage(const char *program)
-{
-    fprintf(stderr, "usage: %s [--disasm] [--max-instr N] [--trace FILE] PROGRAM\n", program);
-    return 2;
-} // CLI errors return status 2
     recording_writes = 0;
     trace_instruction(pc, hw, hw2, wide, before);
 }
@@ -868,38 +801,7 @@ int main(int argc, char **argv)
         trace_file = fopen(trace_path, "w");
         if (!trace_file) { perror(trace_path); return 2; }
     }
-    const char *program = NULL, *trace_path = NULL;
-    int disasm = 0;
-    for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--disasm")) disasm = 1;
-        else if (!strcmp(argv[i], "--trace")) {
-            if (++i == argc) return usage(argv[0]);
-            trace_path = argv[i];
-        } else if (!strcmp(argv[i], "--max-instr")) {
-            if (++i == argc || !argv[i][0]) return usage(argv[0]);
-            for (const char *p = argv[i]; *p; p++)
-                if (*p < '0' || *p > '9') return usage(argv[0]);
-            errno = 0;
-            char *end; // zero is accepted; it prevents any instruction from executing
-            max_instr = strtoull(argv[i], &end, 10);
-            if (errno || *end) return usage(argv[0]);
-        } else if (argv[i][0] == '-' || program) return usage(argv[0]); 
-        else program = argv[i];
-    }
-    if (!program) return usage(argv[0]);
-    // the parser rejects missing option values, unknown options, multiple program paths, and a missing program path
-
-    load_dump(program);
-    if (disasm) return disassemble_text();
-    if (trace_path) {
-        trace_file = fopen(trace_path, "w");
-        if (!trace_file) { perror(trace_path); return 2; }
-    }
     reset();
-    while (!exit_requested) {
-        if (instret >= max_instr) {
-            fprintf(stderr, "LIMIT at pc=0x%08" PRIx32 "\n", r[15]);
-            return 254;
     while (!exit_requested) {
         if (instret >= max_instr) {
             fprintf(stderr, "LIMIT at pc=0x%08" PRIx32 "\n", r[15]);
@@ -907,8 +809,6 @@ int main(int argc, char **argv)
         }
         step();
     }
-    if (trace_file && fclose(trace_file)) { perror(trace_path); return 2; }
-    return exit_status;
     if (trace_file && fclose(trace_file)) { perror(trace_path); return 2; }
     return exit_status;
 }
