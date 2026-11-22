@@ -12,6 +12,11 @@ Based on repository history; imported starter files and public tests are course 
   command-line options, disassembly driver, and tracing (`f714c68`, merged as
   `594f4ba`); `population_count` port and MOV/MVN/shift execution fixes included
   in `594f4ba`.
+- **Yusif (YUSIFABOOD):** Python Thumb assembler foundation in `tools/asm/`:
+  error collection, lexer, expression parser, symbol table, layout and section
+  placement, directives, dump/listing writers, and CLI (`5163a8f`, `78939dd`,
+  `8688694`, `5bf2f71`, `ce33bf1`, `4de1040`, `2c289e3`, `661c8a5`,
+  `283fe5c`); CP1 Thumb program added (`52058f4`).
 
 Outstanding team work: finish the third runnable dump, record RARS/refiss
 comparisons, verify Linux builds and remaining instruction coverage, and create
