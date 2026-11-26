@@ -65,7 +65,7 @@ uint32_t read_mem(uint32_t addr, int size)       /* size = 1, 2 or 4 */
 {
     if (addr % size) fault("UNALIGNED");
     uint8_t *p = mem_ptr(addr);
-    if (!p || !mem_ptr(addr + (uint32_t)size - 1)) fault("BUS"); // the old check validated only the starting address, now it verifies the first and last byte of the requested access
+    if (!p) fault("BUS");
     uint32_t v = 0;
     for (int i = size - 1; i >= 0; i--)                  /* little-endian */
         v = (v << 8) | p[i];
