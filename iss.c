@@ -77,7 +77,7 @@ void write_mem(uint32_t addr, uint32_t v, int size)
     if (addr % size) fault("UNALIGNED");
     if (addr - RAM_BASE >= RAM_SIZE) fault("BUS");    /* only RAM is writable */
     if (recording_writes) {
-        /* PUSH/STM can write at most sixteen registers per instruction. */
+        // PUSH/STM can write at most sixteen registers per instruction.
         if (write_count >= sizeof writes / sizeof writes[0]) abort();
         uint32_t mask = size == 4 ? UINT32_MAX : (1u << (size * 8)) - 1;
         writes[write_count++] = (struct memory_write){addr, v & mask, size};
@@ -87,7 +87,7 @@ void write_mem(uint32_t addr, uint32_t v, int size)
 }
 
 /* readelf reserves 35 characters for up to sixteen bytes. Never parse ASCII. */
-// old loader was short and permissive, this replacement validates the input more carefully while retaining the supplied readelf layout
+
 void load_dump(const char *path)
 {
     FILE *f = fopen(path, "r");
@@ -210,7 +210,7 @@ void reset(void)
 
 void set_nz(uint32_t x) { N = x >> 31; Z = (x == 0); }
 
-/* Two bytes of lookahead let GETINT leave a sign with no digits unread. */
+// Two bytes of lookahead let GETINT leave a sign with no digits unread
 static int input_byte(void)
 {
     return input_count ? input_pending[--input_count] : getchar();
@@ -263,7 +263,68 @@ void svc(int n)
         break;
     } 
     case 0x15: r[0] = input_integer(); break; // GETINT
-    /* CP3 services are added here without changing retirement in step(). */
+    case 0x22: { // READ
+        if (r[0] != 0) {
+            r[0] = (uint32_t)-9; // invalid file descriptor, gives 0xFFFFFFF7
+            break; 
+        }   
+        uint32_t addr = r[1];
+        uint32_t count = r[2];
+        uint32_t actual = 0;
+        
+        while (actual < count) {
+            int byte = input_byte();
+            if (byte == EOF)
+                break;
+            // validate only bytes actually obtained from stdin
+            write_mem(addr + actual, (uint32_t)byte, 1); // accepts RAM only
+            actual++;
+        }
+        r[0] = actual;
+        break;
+    } 
+
+    case 0x23: { // WRITE
+        if (r[0] != 1 && r[0] != 2) { // 1 for stdout or 2 for stderr, otherwise invalid file descriptor
+            r[0] = (uint32_t)-9;
+            break;
+        }
+        FILE *stream = r[0] == 1 ? stdout : stderr;
+        uint32_t addr = r[1];
+        uint32_t count = r[2];
+        // validate the entire buffer before producing any output
+        for (uint32_t i = 0; i < count; i++)
+            (void)read_mem(addr + i, 1);
+        for (uint32_t i = 0; i < count; i++)
+            fputc((int)read_mem(addr + i, 1), stream);
+        r[0] = count;
+        break;
+    } 
+
+    case 0x30: { // INSTRET
+        // step() increments instret after svc() returns
+        uint64_t retired = instret + 1; // include the current instruction in the count
+        
+        r[0] = (uint32_t)retired; // lower 32 bits
+        r[1] = (uint32_t)(retired >> 32); // upper 32 bits
+        break;
+    } 
+
+    case 0x40: { // DUMP_REGS
+        static const char *names[] = {
+            "r0", "r1", "r2", "r3",
+            "r4", "r5", "r6", "r7",
+            "r8", "r9", "r10", "r11",
+            "r12", "sp", "lr", "pc"
+        };
+
+        for (int i = 0; i < 16; i++)
+            fprintf(stderr, "%s=%08" PRIx32 " ", names[i], r[i]);
+        
+        fprintf(stderr, "NZCV=%d%d%d%d\n", N, Z, C, V);
+        break;
+    }
+
     default: fault("UNDEFINED"); 
     }
 }
