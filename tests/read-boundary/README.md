@@ -48,8 +48,20 @@ ELF files are not needed to run the tests and are not included.
 
 ## Verification status
 
-Both cases have been checked on the team simulator. Refiss verification is still
-pending because browser policy blocked local reference-page access. Open the
-supplied refiss HTML manually, load each dump, use exactly AB or ABC without a
-newline, and compare output/status and the trace rules above. These expectations
-come from the handout, not an unverified simulator trace.
+Verified on November 28, 2026 against the user-provided results from refiss v1.1:
+
+| Test | Refiss exit status | Retired instructions / trace lines |
+| --- | --- | --- |
+| valid-boundary | 0 | 44 |
+| out-boundary | 255 | 3 |
+
+Both complete reference traces are saved as `<test-name>.expected.trace`. Fresh
+simulator traces match them line for line. READ memory writes are omitted, the
+valid test's EXIT is included, and the overflow test's faulting READ is absent.
+The shell runner checks these trace properties; it does not yet compare every
+line with the saved reference files.
+
+Both tests also pass the simulator stdout/stderr and exit-status checks. Refiss
+stdout/stderr were not separately supplied in the verification record; compare
+them with the existing expected files before recording full output verification.
+Use exactly `AB` or `ABC` without a trailing newline.
