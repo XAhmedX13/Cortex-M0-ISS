@@ -414,7 +414,7 @@ void step(void)
     uint32_t n, m, res = 0, addr, v;
     switch (instruction.operation) {
         case OP_INVALID:
-            fault("INVALID");
+            fault("UNDEFINED");
             break;
         case OP_UNDEFINED:
             fault("UNDEFINED");
@@ -424,11 +424,15 @@ void step(void)
         case OP_MOV:
             if (instruction.instructionFormat == FMT_MOV_REG ||
                 instruction.instructionFormat == FMT_MOVS_REG) {
-                res = r[instruction.rm];
+                res = instruction.rm == 15 ? pc + 4u : r[instruction.rm];
             } else {
                 res = instruction.imm;
             }
-            r[instruction.rd] = res;
+            if (instruction.rd == 15) {
+                next = res & ~1u;
+            } else {
+                r[instruction.rd] = instruction.rd == 13 ? res & ~3u : res;
+            }
             break;
         case OP_MVN:
             res = ~r[instruction.rm];
@@ -437,17 +441,18 @@ void step(void)
 
         // Arthemitic instructions
         case OP_ADD:
-            n = r[instruction.rn];
-            m = r[instruction.rm];
+            n = instruction.rn == 15 ? pc + 4u : r[instruction.rn];
+            m = instruction.rm == 15 ? pc + 4u : r[instruction.rm];
             if (instruction.instructionFormat != FMT_ADD_REG &&
                 instruction.instructionFormat != FMT_REG2) {
                 m = instruction.imm;
             }
-            if (instruction.rn == 15) {
-                n = (r[15] + 4) & ~3u;      /* pc-relative: Align(pc + 4) */
-            }
             res = n + m;
-            r[instruction.rd] = res;
+            if (instruction.rd == 15) {
+                next = res & ~1u;
+            } else {
+                r[instruction.rd] = instruction.rd == 13 ? res & ~3u : res;
+            }
             if (instruction.sets_flags) {
                 C = (res < n);
                 V = !(n>>31 ^ m>>31) && (res>>31 ^ n>>31);
@@ -677,23 +682,23 @@ void step(void)
         
         // Extend and reverse
         case OP_SXTB:
-            n = r[instruction.rn] & 0xFF;
+            n = r[instruction.rm] & 0xFF;
             sign = n >> 7;
             r[instruction.rd] = sign ? (n | (UINT32_MAX << 8)) : n;
             break;
         case OP_SXTH:
-            n = r[instruction.rn] & 0xFFFF;
+            n = r[instruction.rm] & 0xFFFF;
             sign = n >> 15;
             r[instruction.rd] = sign ? (n | (UINT32_MAX << 16)) : n;
             break;
         case OP_UXTB:
-            r[instruction.rd] = r[instruction.rn] & 0xFF;
+            r[instruction.rd] = r[instruction.rm] & 0xFF;
             break;
         case OP_UXTH:
-            r[instruction.rd] = r[instruction.rn] & 0xFFFF;
+            r[instruction.rd] = r[instruction.rm] & 0xFFFF;
             break;
         case OP_REV:
-            n = r[instruction.rn];
+            n = r[instruction.rm];
             r[instruction.rd] = ((n >> 24) & 0xFF) | ((n >> 8) & 0xFF00) | ((n << 8) & 0xFF0000) | ((n << 24) & 0xFF000000);
             break;
 
